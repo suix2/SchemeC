@@ -1,3 +1,5 @@
+{-# LANGUAGE ExistentialQuantification #-}
+
 module Evaluator where
 
 import Numeric
@@ -25,11 +27,37 @@ eval :: LispVal -> ThrowsError LispVal
 eval val@(String _) = return val
 eval val@(Number _) = return val
 eval val@(Bool _)   = return val
-eval (List [Atom "quote", val]) = return val
-eval (List [Atom "if", pred, conseq, alt]) = do res <- eval pred
-                                                case res of
-                                                    Bool True -> eval conseq
-                                                    otherwise -> eval alt
+eval (List [Atom "quote", val])       = return val
+eval cxpr@(List ((Atom "cond") : cs)) = 
+        if null cs
+        then throwError $ BadSpecialForm "Non-exhaustive clauses: " cxpr
+        else case head cs of
+                List [Atom "else",
+                      expr]       -> eval expr
+                List [pred, expr] -> eval $ List [Atom "if", pred, expr,
+                                                  List (Atom "cond" : tail cs)]
+                _                 -> throwError $ BadSpecialForm
+                                                  "Invalid cond expr: " cxpr
+eval (List [Atom "if", pred, conseq, alt]) = do
+        res <- eval pred
+        case res of
+           Bool True  -> eval conseq
+           Bool False -> eval alt
+           _          -> throwError $ TypeMismatch "bool" pred
+eval cxpr@(List (Atom "case" : key : cs)) =
+        if null cs
+        then throwError $ BadSpecialForm "Non-exhaustive clauses: " cxpr
+        else case head cs of
+                List (Atom "else" : expr) -> mapM eval expr >>= return . last
+                List ((List cas) : expr)  -> do
+                    kv <- eval key
+                    eqli <- mapM (\x -> eqv [x, kv]) cas
+                    if Bool True `elem` eqli
+                        then mapM eval expr >>= return . last
+                        else eval $ List (Atom "case" : key : tail cs)
+                _                         -> throwError $ BadSpecialForm
+                                                          "Invalid case expr"
+                                                          cxpr
 eval (List (Atom func : args)) = mapM eval args >>= apply func
 -- eval (List (Atom func : args)) = apply func $ map eval args
 eval badForm = throwError $ BadSpecialForm "Unrecognized special form" badForm
@@ -71,7 +99,8 @@ primitives = [("+", nbop (+)),
               ("cdr", cdr),
               ("cons", cons),
               ("eq?", eqv),
-              ("eqv?", eqv)]
+              ("eqv?", eqv),
+              ("equal?", equal)]
 
 nbop :: (Integer -> Integer -> Integer) -> [LispVal] -> ThrowsError LispVal
 nbop op sval@[_] = throwError $ NumArgs 2 sval
@@ -155,15 +184,41 @@ eqv [(String arg1), (String arg2)] = return $ Bool $ arg1 == arg2
 eqv [(Atom arg1), (Atom arg2)]     = return $ Bool $ arg1 == arg2
 eqv [(DottedList xf xs),
      (DottedList yf ys)]           = eqv [List $ xf ++ [xs], List $ yf ++ [ys]]
-eqv [(List arg1), (List arg2)]     = return $
-                                       Bool $
-                                         (length arg1 == length arg2) &&
-                                         (and $ map eqvPair $ zip arg1 arg2)
-                        where eqvPair (x1, x2) = case eqv [x1, x2] of
-                                                    Left erro -> False
-                                                    Right (Bool val) -> val
+eqv [li1@(List arg1),
+     li2@(List arg2)]              = eqvList eqv [li1, li2]
 eqv [_, _]                         = return $ Bool False
 eqv badArgList                     = throwError $ NumArgs 2 badArgList
+
+-- For equal?
+data Unpacker = forall a. Eq a => AnyUnpacker (LispVal -> ThrowsError a)
+
+unpackEq :: LispVal -> LispVal -> Unpacker -> ThrowsError Bool
+unpackEq arg1 arg2 (AnyUnpacker unpacker) = do unpacked1 <- unpacker arg1
+                                               unpacked2 <- unpacker arg2
+                                               return $ unpacked1 == unpacked2
+                                            `catchError` (const $ return False)
+
+equal :: [LispVal] -> ThrowsError LispVal
+equal [(DottedList xf xs),
+       (DottedList yf ys)] = equal [List $ xf ++ [xs], List $ yf ++ [ys]]
+equal [li1@(List arg1),
+       li2@(List arg2)]    = eqvList equal [li1, li2]
+equal [arg1, arg2]         = do peq <- liftM or $ mapM (unpackEq arg1 arg2)
+                                 [AnyUnpacker unpackNum, AnyUnpacker unpackStr,
+                                  AnyUnpacker unpackBool]
+                                eeq <- eqv [arg1, arg2]
+                                return $ Bool $ peq || let (Bool x) = eeq in x
+equal badArgList           = throwError $ NumArgs 2 badArgList
+
+eqvList :: ([LispVal] -> ThrowsError LispVal) -> 
+                [LispVal] -> ThrowsError LispVal
+eqvList eqvFunc [(List arg1), (List arg2)] = 
+            return $ Bool $ (length arg1 == length arg2) && 
+                            (all eqvPair $ zip arg1 arg2)
+                where eqvPair (x1, x2) = case eqvFunc [x1, x2] of
+                                        Left err -> False
+                                        Right (Bool val) -> val
+
 
 
 
