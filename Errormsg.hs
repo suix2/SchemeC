@@ -36,7 +36,7 @@ trapError action = catchError action (return . show)
 extractVal :: ThrowsError a -> a
 extractVal (Right val) = val
 
-
+type IOThrowsError = ExceptT LispError IO
 
 
 
