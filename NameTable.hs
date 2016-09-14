@@ -6,8 +6,6 @@ import Control.Monad.Except
 import LispVals
 import Errormsg
 
-type Env = IORef [(String, IORef LispVal)]
-
 newEnv :: IO Env
 newEnv = newIORef []
 
