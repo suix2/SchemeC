@@ -2,6 +2,7 @@
 
 module Evaluator where
 
+import Data.IORef
 import Numeric
 import Data.Ratio
 import Data.Complex
@@ -10,6 +11,7 @@ import Control.Monad.Except
 
 import LispVals
 import Errormsg
+import NameTable
 
 -- data LispVal = Atom String
              -- | List [LispVal]
@@ -23,44 +25,51 @@ import Errormsg
              -- | Complex (Complex Double)
              -- | Vector (Array Int LispVal)
 
-eval :: LispVal -> ThrowsError LispVal
-eval val@(String _) = return val
-eval val@(Number _) = return val
-eval val@(Bool _)   = return val
-eval (List [Atom "quote", val])       = return val
-eval cxpr@(List ((Atom "cond") : cs)) = 
+eval :: Env -> LispVal -> IOThrowsError LispVal
+eval env val@(String _) = return val
+eval env val@(Number _) = return val
+eval env val@(Bool _)   = return val
+eval env (Atom id)      = getVar env id
+eval env (List [Atom "quote", val])       = return val
+eval env cxpr@(List ((Atom "cond") : cs)) = 
         if null cs
         then throwError $ BadSpecialForm "Non-exhaustive clauses: " cxpr
         else case head cs of
                 List [Atom "else",
-                      expr]       -> eval expr
-                List [pred, expr] -> eval $ List [Atom "if", pred, expr,
-                                                  List (Atom "cond" : tail cs)]
+                      expr]       -> eval env expr
+                List [pred, expr] -> eval env $ List [Atom "if", pred, expr,
+                                                      List (Atom "cond" :
+                                                            tail cs)]
                 _                 -> throwError $ BadSpecialForm
                                                   "Invalid cond expr: " cxpr
-eval (List [Atom "if", pred, conseq, alt]) = do
-        res <- eval pred
+eval env (List [Atom "if", pred, conseq, alt]) = do
+        res <- eval env pred
         case res of
-           Bool True  -> eval conseq
-           Bool False -> eval alt
+           Bool True  -> eval env conseq
+           Bool False -> eval env alt
            _          -> throwError $ TypeMismatch "bool" pred
-eval cxpr@(List (Atom "case" : key : cs)) =
+eval env (List [Atom "set!", Atom var, e]) = eval env e >>= setVar env var
+eval env (List [Atom "define", Atom var, e]) = eval env e >>= defineVar env var
+eval env cxpr@(List (Atom "case" : key : cs)) =
         if null cs
         then throwError $ BadSpecialForm "Non-exhaustive clauses: " cxpr
         else case head cs of
-                List (Atom "else" : expr) -> mapM eval expr >>= return . last
+                List (Atom "else" : expr) -> mapM (eval env) expr >>=
+                                                return . last
                 List ((List cas) : expr)  -> do
-                    kv <- eval key
-                    eqli <- mapM (\x -> eqv [x, kv]) cas
+                    kv <- eval env key
+                    eqli <- mapM (\x -> (liftTE . eqv) [x, kv]) cas
                     if Bool True `elem` eqli
-                        then mapM eval expr >>= return . last
-                        else eval $ List (Atom "case" : key : tail cs)
+                        then mapM (eval env) expr >>= return . last
+                        else eval env $ List (Atom "case" : key : tail cs)
                 _                         -> throwError $ BadSpecialForm
                                                           "Invalid case expr"
                                                           cxpr
-eval (List (Atom func : args)) = mapM eval args >>= apply func
+eval env (List (Atom func : args)) = mapM (eval env) args >>=
+                                        liftTE . apply func
 -- eval (List (Atom func : args)) = apply func $ map eval args
-eval badForm = throwError $ BadSpecialForm "Unrecognized special form" badForm
+eval env badForm = throwError $ BadSpecialForm 
+                                "Unrecognized special form" badForm
 
 apply :: String -> [LispVal] -> ThrowsError LispVal
 apply func args = maybe (throwError $ NotFunction

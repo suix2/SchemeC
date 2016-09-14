@@ -28,7 +28,7 @@ getVar env var = do res <- liftIO $ readIORef env
                           (liftIO . readIORef)
                           (lookup var res)
 
-serVar :: Env -> String -> LispVal -> IOThrowsError LispVal
+setVar :: Env -> String -> LispVal -> IOThrowsError LispVal
 setVar env var val = do res <- liftIO $ readIORef env
                         maybe (throwError $ UnboundVar "Var unbound" var)
                               (liftIO . (flip writeIORef val))
@@ -49,7 +49,7 @@ bindVars :: Env -> [(String, LispVal)] -> IO Env
 bindVars env bounds = readIORef env >>= extendEnv bounds >>= newIORef
         where extendEnv bounds env  = liftM (++ env) (mapM addBinding bounds)
               addBinding (var, val) = do ref <- newIORef val
-                                         return (val, ref)
+                                         return (var, ref)
 
 
 

@@ -8,12 +8,13 @@ import LispVals
 import Parser
 import Evaluator
 import Errormsg
+import NameTable
 
 main :: IO ()
 main = do args <- getArgs
           case length args of
             0 -> runRepl
-            1 -> ept $ args !! 0
+            1 -> runSngl $ args !! 0
             _ -> putStrLn "Program takes only 0 or 1 args."
 
 flushStr :: String -> IO ()
@@ -22,12 +23,14 @@ flushStr str = putStr str >> hFlush stdout
 readPrompt :: String -> IO String
 readPrompt prompt = flushStr prompt >> getLine
 
-evalString :: String -> IO String
-evalString expr = return $ extractVal $ trapError $ liftM show $ readExpr expr
-                    >>= eval
+evalString :: Env -> String -> IO String
+evalString env expr = runIOThrows $ liftM show $ (liftTE $ readExpr expr)
+                        >>= eval env
+-- evalString expr = return $ extractVal $ trapError $ liftM show $ readExpr expr
+                    -- >>= eval
 
-ept :: String -> IO ()
-ept expr = evalString expr >>= putStrLn
+ept :: Env -> String -> IO ()
+ept env expr = evalString env expr >>= putStrLn
 
 until_ :: Monad m => (a -> Bool) -> m a -> (a -> m ()) -> m ()
 until_ pred prompt act = do res <- prompt
@@ -36,9 +39,11 @@ until_ pred prompt act = do res <- prompt
                               else act res >> until_ pred prompt act
 
 runRepl :: IO ()
-runRepl = until_ (== "quit") (readPrompt "Lisp>>> ") ept
+runRepl = newEnv >>= until_ (== "quit") (readPrompt "Lisp>>> ") . ept
+-- runRepl = until_ (== "quit") (readPrompt "Lisp>>> ") ept
 
-
+runSngl :: String -> IO ()
+runSngl expr = newEnv >>= flip ept expr
 
 
 
