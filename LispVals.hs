@@ -20,7 +20,7 @@ data LispVal = Atom String
              | Complex (Complex Double)
              | Vector (Array Int LispVal)
              | PrFnc ([LispVal] -> ThrowsError LispVal)
-             | Fnc {pms :: [String], argli :: (Maybe String),
+             | Fnc {pms :: [String], vla :: (Maybe String), -- var-len arg
                     body :: [LispVal], clsr :: Env}
 
 instance Eq LispVal where (==) = lvTxtCmp
@@ -42,6 +42,14 @@ showVal (Float f)          = show f
 showVal (Ratio r)          = show (numerator r) ++ "/" ++ show (denominator r)
 showVal (Complex (r :+ c)) = show r ++ "+" ++ show c ++"i"
 showVal (Vector arr)       = "(vector " ++ unList (elems arr) ++ ")"
+showVal (PrFnc _)          = "<priimitive>"
+showVal (Fnc {pms  = args,
+              vla  = vla,
+              body = body,
+              clsr = env}) = "(lambda (" ++ unwords (map show args) ++
+                             (case vla of
+                                Nothing -> ""
+                                Just arg -> " . " ++ arg) ++") ...)"
 
 unList :: [LispVal] -> String
 unList = unwords . map showVal
