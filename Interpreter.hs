@@ -39,11 +39,11 @@ until_ pred prompt act = do res <- prompt
                               else act res >> until_ pred prompt act
 
 runRepl :: IO ()
-runRepl = newEnv >>= until_ (== "quit") (readPrompt "Lisp>>> ") . ept
+runRepl = initPrEnv >>= until_ (== "quit") (readPrompt "Lisp>>> ") . ept
 -- runRepl = until_ (== "quit") (readPrompt "Lisp>>> ") ept
 
 runSngl :: String -> IO ()
-runSngl expr = newEnv >>= flip ept expr
+runSngl expr = initPrEnv >>= flip ept expr
 
 
 

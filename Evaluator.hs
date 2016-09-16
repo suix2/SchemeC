@@ -49,7 +49,18 @@ eval env (List [Atom "if", pred, conseq, alt]) = do
            Bool False -> eval env alt
            _          -> throwError $ TypeMismatch "bool" pred
 eval env (List [Atom "set!", Atom var, e]) = eval env e >>= setVar env var
-eval env (List [Atom "define", Atom var, e]) = eval env e >>= defineVar env var
+eval env (List [Atom "define", Atom var, e]) = 
+        eval env e >>= defineVar env var
+eval env (List (Atom "define" : List (Atom fn : pms) : bdy)) =
+        mkNmFnc env pms bdy >>= defineVar env fn
+eval env (List (Atom "define" : DottedList (Atom fn : pms) vla : bdy)) =
+        mkVlFnc vla env pms bdy >>= defineVar env fn
+eval env (List (Atom "lambda" : List pms : bdy)) =
+        mkNmFnc env pms bdy
+eval env (List (Atom "lambda" : DottedList pms vla : bdy)) =
+        mkVlFnc vla env pms bdy
+eval env (List (Atom "lambda" : vla@(Atom _) : bdy)) =
+        mkVlFnc vla env [] bdy
 eval env cxpr@(List (Atom "case" : key : cs)) =
         if null cs
         then throwError $ BadSpecialForm "Non-exhaustive clauses: " cxpr
@@ -65,18 +76,38 @@ eval env cxpr@(List (Atom "case" : key : cs)) =
                 _                         -> throwError $ BadSpecialForm
                                                           "Invalid case expr"
                                                           cxpr
-eval env (List (Atom func : args)) = mapM (eval env) args >>=
-                                        liftTE . apply func
+eval env (List (fnc : args)) = do function <- eval env fnc
+                                  argsVals <- mapM (eval env) args
+                                  apply function argsVals
+-- eval env (List (Atom func : args)) = mapM (eval env) args >>=
+                                        -- liftTE . apply func
 -- eval (List (Atom func : args)) = apply func $ map eval args
 eval env badForm = throwError $ BadSpecialForm 
                                 "Unrecognized special form" badForm
 
-apply :: String -> [LispVal] -> ThrowsError LispVal
-apply func args = maybe (throwError $ NotFunction
-                                      "Unrecognized Function"
-                                      func)
-                        ($ args)
-                        (lookup func primitives)
+apply :: LispVal -> [LispVal] -> IOThrowsError LispVal
+apply (PrFnc fnc) args            = liftTE $ fnc args
+apply (Fnc pms vla bdy clsr) args = 
+        if num pms /= num args && vla == Nothing
+           then throwError $ NumArgs (num pms) args
+           else (liftIO $ bindVars clsr $ zip pms args) >>=
+                    bindVla vla >>= evalBdy
+        where num             = toInteger . length
+              evalBdy env     = liftM last $ mapM (eval env) bdy
+              remArgs         = drop (length pms) args
+              bindVla arg env = case arg of
+                        Just name -> liftIO $ bindVars env [(name,
+                                                             List $ remArgs)]
+                        Nothing   -> return env
+-- apply func args = maybe (throwError $ NotFunction
+                                      -- "Unrecognized Function"
+                                      -- func)
+                        -- ($ args)
+                        -- (lookup func primitives)
+
+initPrEnv :: IO Env
+initPrEnv = newEnv >>= (flip bindVars $ map mkPrFnc primitives)
+        where mkPrFnc (s, f) = (s, PrFnc f)
 
 primitives :: [(String, [LispVal] -> ThrowsError LispVal)]
 primitives = [("+", nbop (+)),
@@ -227,6 +258,10 @@ eqvList eqvFunc [(List arg1), (List arg2)] =
                 where eqvPair (x1, x2) = case eqvFunc [x1, x2] of
                                         Left err -> False
                                         Right (Bool val) -> val
+
+mkFnc vla env pms bdy = return $ Fnc (map showVal pms) vla bdy env
+mkNmFnc = mkFnc Nothing
+mkVlFnc   = mkFnc . Just . showVal
 
 
 
