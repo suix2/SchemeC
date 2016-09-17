@@ -1,6 +1,7 @@
 module LispVals where
 
 import Data.IORef
+import System.IO
 import Text.ParserCombinators.Parsec hiding (spaces)
 import Control.Monad.Except
 import Data.Ratio
@@ -22,6 +23,8 @@ data LispVal = Atom String
              | PrFnc ([LispVal] -> ThrowsError LispVal)
              | Fnc {pms :: [String], vla :: (Maybe String), -- var-len arg
                     body :: [LispVal], clsr :: Env}
+             | IOFnc ([LispVal] -> IOThrowsError LispVal)
+             | Port Handle
 
 instance Eq LispVal where (==) = lvTxtCmp
 lvTxtCmp :: LispVal -> LispVal -> Bool
@@ -50,6 +53,8 @@ showVal (Fnc {pms  = args,
                              (case vla of
                                 Nothing -> ""
                                 Just arg -> " . " ++ arg) ++") ...)"
+showVal (Port _) = "<IO port>"
+showVal (IOFnc _) = "<IO primitive>"
 
 unList :: [LispVal] -> String
 unList = unwords . map showVal

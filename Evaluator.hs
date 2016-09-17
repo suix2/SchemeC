@@ -3,6 +3,7 @@
 module Evaluator where
 
 import Data.IORef
+import System.IO
 import Numeric
 import Data.Ratio
 import Data.Complex
@@ -12,6 +13,7 @@ import Control.Monad.Except
 import LispVals
 import Errormsg
 import NameTable
+import Parser
 
 -- data LispVal = Atom String
              -- | List [LispVal]
@@ -61,6 +63,8 @@ eval env (List (Atom "lambda" : DottedList pms vla : bdy)) =
         mkVlFnc vla env pms bdy
 eval env (List (Atom "lambda" : vla@(Atom _) : bdy)) =
         mkVlFnc vla env [] bdy
+eval env (List [Atom "load", String fn]) =
+        load fn >>= liftM last . mapM (eval env)
 eval env cxpr@(List (Atom "case" : key : cs)) =
         if null cs
         then throwError $ BadSpecialForm "Non-exhaustive clauses: " cxpr
@@ -106,8 +110,11 @@ apply (Fnc pms vla bdy clsr) args =
                         -- (lookup func primitives)
 
 initPrEnv :: IO Env
-initPrEnv = newEnv >>= (flip bindVars $ map mkPrFnc primitives)
-        where mkPrFnc (s, f) = (s, PrFnc f)
+initPrEnv = newEnv >>= (flip bindVars $ map (mkFnc IOFnc) ioPrimitives ++
+                                        map (mkFnc PrFnc) primitives)
+                       where mkFnc constr (var, fnc) = (var, constr fnc)
+-- initPrEnv = newEnv >>= (flip bindVars $ map mkPrFnc primitives)
+        -- where mkPrFnc (s, f) = (s, PrFnc f)
 
 primitives :: [(String, [LispVal] -> ThrowsError LispVal)]
 primitives = [("+", nbop (+)),
@@ -228,6 +235,45 @@ eqv [li1@(List arg1),
      li2@(List arg2)]              = eqvList eqv [li1, li2]
 eqv [_, _]                         = return $ Bool False
 eqv badArgList                     = throwError $ NumArgs 2 badArgList
+
+ioPrimitives :: [(String, [LispVal] -> IOThrowsError LispVal)]
+ioPrimitives = [("apply", applyFnc),
+                ("open-input-file", mkPort ReadMode),
+                ("open-output-file", mkPort WriteMode),
+                ("close-input-port", cxPort),
+                ("close-output-port", cxPort),
+                ("read", readFnc),
+                ("write", writeFnc),
+                ("read-contents", readCon),
+                ("read-all", readAll)]
+
+applyFnc :: [LispVal] -> IOThrowsError LispVal
+applyFnc [fnc, List args] = apply fnc args
+applyFnc (fnc : args)     = apply fnc args
+
+mkPort :: IOMode -> [LispVal] -> IOThrowsError LispVal
+mkPort mode [String fn] = liftM Port $ liftIO $ openFile fn mode
+
+cxPort :: [LispVal] -> IOThrowsError LispVal
+cxPort [Port p] = liftIO $ hClose p >> (return $ Bool True)
+cxPort _        = return $ Bool False
+
+readFnc :: [LispVal] -> IOThrowsError LispVal
+readFnc []       = readFnc [Port stdin]
+readFnc [Port p] = (liftIO $ hGetLine p) >>= liftTE . readExpr
+
+writeFnc :: [LispVal] -> IOThrowsError LispVal
+writeFnc [l]         = writeFnc [l, Port stdout]
+writeFnc [l, Port p] = liftIO $ hPrint p l >> (return $ Bool True)
+
+readCon :: [LispVal] -> IOThrowsError LispVal
+readCon [String fn] = liftM String $ liftIO $ readFile fn
+
+load :: String -> IOThrowsError [LispVal]
+load fn = (liftIO $ readFile fn) >>= liftTE . readExprLi
+
+readAll :: [LispVal] -> IOThrowsError LispVal
+readAll [String fn] = liftM List $ load fn
 
 -- For equal?
 data Unpacker = forall a. Eq a => AnyUnpacker (LispVal -> ThrowsError a)

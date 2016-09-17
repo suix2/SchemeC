@@ -165,7 +165,16 @@ parseUnQote = do char ','
                  x <- parseExpr
                  return $ List [Atom "unquote", x]
 
+readOThrow :: Parser a -> String -> ThrowsError a
+readOThrow parser input = case parse parser "lisp" input of
+                            Left err -> throwError $ Parser err
+                            Right val -> return val
+
 readExpr :: String -> ThrowsError LispVal
-readExpr input = case parse parseExpr "lisp" input of
-    Left err -> throwError $ Parser err
-    Right val -> return val
+readExpr = readOThrow parseExpr
+-- readExpr input = case parse parseExpr "lisp" input of
+    -- Left err -> throwError $ Parser err
+    -- Right val -> return val
+
+readExprLi :: String -> ThrowsError [LispVal]
+readExprLi = readOThrow (endBy parseExpr spaces)
